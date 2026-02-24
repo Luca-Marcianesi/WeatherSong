@@ -9,15 +9,15 @@ load_dotenv()
 
 # Configurazione API Keys
 # Tenta di recuperare le chiavi da st.secrets (deploy) o variabili d'ambiente (locale)
-try:
-    XAI_API_KEY = st.secrets["XAI_API_KEY"]
-except (FileNotFoundError, KeyError):
-    XAI_API_KEY = os.getenv("XAI_API_KEY")
+# La sintassi st.secrets.get() è più robusta per evitare KeyError
+XAI_API_KEY = st.secrets.get("XAI_API_KEY") or os.getenv("XAI_API_KEY")
+OPENWEATHER_API_KEY = st.secrets.get("OPENWEATHER_API_KEY") or os.getenv("OPENWEATHER_API_KEY")
 
-try:
-    OPENWEATHER_API_KEY = st.secrets["OPENWEATHER_API_KEY"]
-except (FileNotFoundError, KeyError):
-    OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
+if not XAI_API_KEY:
+    st.error("Errore: Chiave API Grok (xAI) non configurata!")
+
+if not OPENWEATHER_API_KEY:
+    st.error("Errore: Chiave API OpenWeatherMap non configurata!")
 
 # Configura il client per Grok (xAI) usando la libreria OpenAI
 if XAI_API_KEY:
