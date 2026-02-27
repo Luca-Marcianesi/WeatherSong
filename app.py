@@ -1,177 +1,131 @@
 import streamlit as st
-import openai
 import requests
 import os
 from dotenv import load_dotenv
+import google.generativeai as genai
 
-# Carica le variabili d'ambiente dal file .env se presente (per sviluppo locale)
+# Carica le variabili d'ambiente dal file .env
 load_dotenv()
 
-# Configurazione API Keys
-# Tenta di recuperare le chiavi da st.secrets (deploy) o variabili d'ambiente (locale)
-# La sintassi st.secrets.get() è più robusta per evitare KeyError
-XAI_API_KEY = st.secrets.get("XAI_API_KEY") or os.getenv("XAI_API_KEY")
-OPENWEATHER_API_KEY = st.secrets.get("OPENWEATHER_API_KEY") or os.getenv("OPENWEATHER_API_KEY")
+# Chiavi API
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
-if not XAI_API_KEY:
-    st.error("Errore: Chiave API Grok (xAI) non configurata!")
+# Configura Gemini con la chiave API
+genai.configure(api_key=GEMINI_API_KEY)
 
-if not OPENWEATHER_API_KEY:
-    st.error("Errore: Chiave API OpenWeatherMap non configurata!")
 
-# Configura il client per Grok (xAI) usando la libreria OpenAI
-if XAI_API_KEY:
-    openai.api_key = XAI_API_KEY
-    openai.base_url = "https://api.x.ai/v1"
-
-def get_weather(city):
+def get_weather(city: str) -> dict:
     """
-    Recupera i dati meteo per una data città utilizzando OpenWeatherMap API.
-    Restituisce una tupla (descrizione, temperatura) o (None, None) in caso di errore.
+    Chiede il meteo corrente a OpenWeather per la città indicata.
+    Restituisce un dizionario con descrizione, temperatura e nome città,
+    oppure None in caso di errore.
     """
-    if not OPENWEATHER_API_KEY:
-        st.error("Chiave API OpenWeatherMap mancante. Configurala in .env o secrets.")
-        return None, None
+    geo_url = f"http://api.openweathermap.org/geo/1.0/direct?q={city},it&limit=1&appid={OPENWEATHER_API_KEY}"
+    geo_res = requests.get(geo_url).json()
 
-    base_url = "http://api.openweathermap.org/data/2.5/weather"
-    params = {
-        "q": city,
-        "appid": OPENWEATHER_API_KEY,
-        "units": "metric", # Per ottenere la temperatura in Celsius
-        "lang": "it"       # Risposte in italiano
-    }
+    if geo_res:
+        lat = geo_res[0]['lat']
+        lon = geo_res[0]['lon']
+    
+        # 2. Usa le coordinate per il meteo
+        weather_url = "https://api.openweathermap.org/data/2.5/weather"
+        params = {
+            "lat": lat,
+            "lon": lon,
+            "appid": OPENWEATHER_API_KEY,
+            "units": "metric",
+            "lang": "it",
+        }
+    response = requests.get(weather_url, params=params)
 
-    try:
-        response = requests.get(base_url, params=params)
-        response.raise_for_status() # Solleva un'eccezione per codici di stato 4xx/5xx
-        data = response.json()
-        
-        weather_desc = data['weather'][0]['description']
-        temp = data['main']['temp']
-        
-        return weather_desc, temp
-    except requests.exceptions.HTTPError as err:
-        if response.status_code == 404:
-            st.error(f"Città '{city}' non trovata. Controlla il nome e riprova.")
-        else:
-            st.error(f"Errore API Meteo: {err}")
-        return None, None
-    except Exception as e:
-        st.error(f"Si è verificato un errore durante il recupero del meteo: {e}")
-        return None, None
-
-def get_ai_recommendation(city, weather_desc, temp):
-    """
-    Utilizza Grok (xAI) per suggerire una canzone basata sul meteo.
-    """
-    if not XAI_API_KEY:
-        st.error("Chiave API Grok (xAI) mancante. Configurala in .env o secrets.")
+    if response.status_code != 200:
         return None
 
+    data = response.json()
+    print("Dati meteo ricevuti:", data)  # Debug: stampa i dati ricevuti da OpenWeather
+    # Estrai solo le info utili
+    weather_info = {
+        "city": data["name"],
+        "description": data["weather"][0]["description"],
+        "temp": data["main"]["temp"],
+        "icon": data["weather"][0]["icon"],
+    }
+    return weather_info
+
+
+def get_song_from_gemini(weather_description: str, city: str, temp: float) -> str:
+    """
+    Chiede a Gemini di suggerire una canzone adatta al meteo
+    e di restituire il link Spotify corrispondente.
+    """
     prompt = (
-        f"Il meteo attuale a {city} è '{weather_desc}' con una temperatura di {temp:.1f}°C. "
-        "In base a questo contesto atmosferico, suggerisci una sola canzone (Titolo e Artista) "
-        "che rifletta il mood della giornata. Rispondi esclusivamente nel formato: 'Titolo - Artista'. "
-        "Non aggiungere commenti, virgolette o altro testo."
+        f"Il meteo attuale a {city} è: {weather_description}, con una temperatura di {temp}°C. "
+        "Suggerisci UNA sola canzone (titolo e artista) che si adatti perfettamente a questo meteo. "
+        "Poi fornisci il link diretto Spotify della canzone (formato: https://open.spotify.com/track/...). "
+        "Rispondi SOLO in questo formato esatto:\n"
+        "Canzone: TITOLO - ARTISTA\n"
+        "Spotify: LINK"
     )
 
-    try:
-        # Implementazione compatibile con client OpenAI configurato per Grok
-        from openai import OpenAI
-        client = OpenAI(
-            api_key=XAI_API_KEY,
-            base_url="https://api.x.ai/v1"
-        )
-        
-        response = client.chat.completions.create(
-            model="grok-2-latest", # Modello Grok
-            messages=[
-                {"role": "system", "content": "Sei un esperto curatore musicale sensibile al meteo."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.7,
-            max_tokens=50
-        )
-        
-        suggestion = response.choices[0].message.content.strip()
-        return suggestion
-        
-    except Exception as e:
-        st.error(f"Errore durante la comunicazione con l'IA (Grok): {e}")
-        return None
+    # Usa il modello Gemini
+    # Questa è la versione più stabile e con quota garantita
+    model = genai.GenerativeModel('gemini-flash-latest')
+    response = model.generate_content(prompt)
+    print("Gemini ha risposto:", response.text)  # Debug: stampa la risposta di Gemini
+    return response.text
 
-# --- Interfaccia Streamlit ---
 
-st.set_page_config(page_title="Weather-Mood AI", page_icon="🎵")
+# ───────────────────────── UI STREAMLIT ─────────────────────────
 
-st.title("🎵 Weather-Mood AI Predictor")
-st.subheader("Progetto Universitario: Sistemi Intelligenti / Sviluppo Web Avanzato")
-st.markdown("Scopri la colonna sonora perfetta per il tempo fuori dalla tua finestra!")
+# Configurazione pagina
+st.set_page_config(page_title="WeatherSong 🎵", page_icon="🌤️")
 
-# Verifica preliminare delle chiavi
-if not XAI_API_KEY or "inserisci_qui" in XAI_API_KEY:
-    st.warning("⚠️ Grok (xAI) API Key non configurata. Impostala nel file .env o nei secrets.")
-if not OPENWEATHER_API_KEY or "inserisci_qui" in OPENWEATHER_API_KEY:
-    st.warning("⚠️ OpenWeatherMap API Key non configurata. Impostala nel file .env o nei secrets.")
+st.title("🌤️ WeatherSong 🎵")
+st.markdown("Inserisci una città e ti suggerirò una canzone Spotify adatta al meteo!")
 
-# Input
-col1, col2 = st.columns([3, 1])
-with col1:
-    city = st.text_input("Inserisci il nome della tua città", placeholder="Es. Roma, Milano, New York...")
-with col2:
-    # Piccolo hack per allineare il bottone verticalmente con l'input
-    st.write("") 
-    st.write("")
-    analyze_btn = st.button("Analizza Atmosfera")
+# Input utente
+city = st.text_input("📍 Inserisci la tua città", placeholder="es. Roma")
 
-if analyze_btn and city:
-    with st.spinner('Controllo il meteo e consulto l\'Oracolo Musicale...'):
-        # 1. Recupero Meteo
-        weather_desc, temp = get_weather(city)
-        
-        if weather_desc is not None:
-            # Mostra info meteo
-            st.info(f"📍 **Meteo a {city}**: {weather_desc.capitalize()}, {temp:.1f}°C")
-            
-            # 2. Suggerimento IA
-            song_suggestion = get_ai_recommendation(city, weather_desc, temp)
-            
-            if song_suggestion:
-                # Pulizia stringa se necessario (rimozione virgolette residue)
-                song_suggestion = song_suggestion.replace('"', '').replace("'", "")
-                
-                st.success("🎶 L'IA ha scelto per te:")
-                st.markdown(f"<h2 style='text-align: center; color: #1DB954;'>{song_suggestion}</h2>", unsafe_allow_html=True)
-                
-                # 3. Link Spotify
-                # Codifica URL per caratteri speciali
-                import urllib.parse
-                query_encoded = urllib.parse.quote(song_suggestion)
-                spotify_url = f"https://open.spotify.com/search/{query_encoded}"
-                
-                st.markdown(f"""
-                <div style="text-align: center; margin-top: 20px;">
-                    <a href="{spotify_url}" target="_blank" style="text-decoration: none;">
-                        <button style="
-                            background-color: #1DB954;
-                            color: white;
-                            padding: 12px 24px;
-                            border: none;
-                            border-radius: 25px;
-                            font-weight: bold;
-                            font-size: 16px;
-                            cursor: pointer;
-                            transition: transform 0.2s;
-                        " onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
-                            🎧 Ascolta su Spotify
-                        </button>
-                    </a>
-                </div>
-                """, unsafe_allow_html=True)
+if st.button("🔍 Cerca canzone"):
+    if not city.strip():
+        st.warning("Per favore inserisci il nome di una città.")
+    else:
+        # Mostra spinner mentre carica
+        with st.spinner("Recupero il meteo..."):
+            weather = get_weather(city.strip())
 
-elif analyze_btn and not city:
-    st.warning("Per favore, inserisci il nome di una città.")
+        if weather is None:
+            st.error("❌ Città non trovata. Controlla il nome e riprova.")
+        else:
+            # Mostra il meteo
+            st.subheader(f"Meteo a {weather['city']}")
+            # Icona meteo da OpenWeather
+            icon_url = f"https://openweathermap.org/img/wn/{weather['icon']}@2x.png"
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                st.image(icon_url, width=80)
+            with col2:
+                st.metric("Temperatura", f"{weather['temp']}°C")
+                st.write(f"**Condizioni:** {weather['description'].capitalize()}")
 
-# Footer
-st.markdown("---")
-st.caption("Powered by Streamlit, Grok (xAI) & OpenWeatherMap")
+            # Chiedi la canzone a Gemini
+            with st.spinner("Cerco la canzone perfetta..."):
+                song_result = get_song_from_gemini(
+                    weather["description"], weather["city"], weather["temp"]
+                )
+
+            st.divider()
+            st.subheader("🎵 Canzone consigliata")
+            st.write(song_result)
+
+            # Prova ad estrarre il link Spotify dal testo
+            for line in song_result.split("\n"):
+                if "open.spotify.com" in line:
+                    # Estrai solo l'URL
+                    link = line.split("http")[-1]
+                    link = "http" + link.strip()
+                    # Rimuovi eventuali caratteri extra alla fine
+                    link = link.rstrip(")")
+                    st.link_button("🎧 Ascolta su Spotify", link)
+                    break
