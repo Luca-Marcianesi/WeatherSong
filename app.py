@@ -37,21 +37,23 @@ def get_weather(city: str) -> dict:
             "units": "metric",
             "lang": "it",
         }
-    response = requests.get(weather_url, params=params)
+        response = requests.get(weather_url, params=params)
 
-    if response.status_code != 200:
-        return None
+        if response.status_code != 200:
+            return None
 
-    data = response.json()
-    print("Dati meteo ricevuti:", data)  # Debug: stampa i dati ricevuti da OpenWeather
-    # Estrai solo le info utili
-    weather_info = {
-        "city": data["name"],
-        "description": data["weather"][0]["description"],
-        "temp": data["main"]["temp"],
-        "icon": data["weather"][0]["icon"],
-    }
-    return weather_info
+        data = response.json()
+        print("Dati meteo ricevuti:", data)  # Debug: stampa i dati ricevuti da OpenWeather
+        # Estrai solo le info utili
+        weather_info = {
+            "city": data["name"],
+            "description": data["weather"][0]["description"],
+            "temp": data["main"]["temp"],
+            "icon": data["weather"][0]["icon"],
+        }
+        return weather_info
+    
+    return None
 
 
 def get_song_from_gemini(weather_description: str, city: str, temp: float) -> str:
