@@ -22,6 +22,7 @@ def get_youtube_video(query: str) -> str:
     Cerca su YouTube il video corrispondente alla query
     e restituisce il link completo.
     """
+    print(f"DEBUG: Cerco su YouTube: {query}") # Debug
     search_url = "https://www.googleapis.com/youtube/v3/search"
     params = {
         "part": "snippet",
@@ -31,13 +32,23 @@ def get_youtube_video(query: str) -> str:
         "type": "video"
     }
     
-    response = requests.get(search_url, params=params)
-    
-    if response.status_code == 200:
-        data = response.json()
-        if "items" in data and len(data["items"]) > 0:
-            video_id = data["items"][0]["id"]["videoId"]
-            return f"https://www.youtube.com/watch?v={video_id}"
+    try:
+        response = requests.get(search_url, params=params)
+        print(f"DEBUG: YouTube Status Code: {response.status_code}") # Debug
+        
+        if response.status_code == 200:
+            data = response.json()
+            if "items" in data and len(data["items"]) > 0:
+                video_id = data["items"][0]["id"]["videoId"]
+                link = f"https://www.youtube.com/watch?v={video_id}"
+                print(f"DEBUG: Video trovato: {link}") # Debug
+                return link
+            else:
+                print("DEBUG: Nessun video trovato nella risposta.")
+        else:
+            print(f"DEBUG: Errore API YouTube: {response.text}")
+    except Exception as e:
+        print(f"DEBUG: Eccezione durante ricerca YouTube: {e}")
             
     return None
 
@@ -91,7 +102,7 @@ def get_song_from_gemini(weather_description: str, city: str, temp: float) -> st
     prompt = (
         f"Il meteo attuale a {city} è: {weather_description}, con una temperatura di {temp}°C. "
         "Suggerisci UNA sola canzone (titolo e artista) che si adatti perfettamente a questo meteo. "
-        "Rispondi SOLO in questo formato esatto:\n"
+        "Rispondi SOLO con il titolo e l'artista, nel seguente formato esatto:\n"
         "Canzone: TITOLO - ARTISTA"
     )
 
@@ -141,13 +152,19 @@ if st.button("🔍 Cerca canzone"):
                     weather["description"], weather["city"], weather["temp"]
                 )
             
-            # Parsing della risposta
-            song_title = gemini_response.replace("Canzone:", "").strip()
+            # Parsing della risposta - Rimuove prefissi comuni e markdown
+            clean_response = gemini_response.replace("**", "").replace("*", "").strip()
+            if "Canzone:" in clean_response:
+                song_title = clean_response.split("Canzone:")[1].strip()
+            else:
+                song_title = clean_response
+
+            print(f"DEBUG: Titolo estratto per YouTube: {song_title}") # Debug
             
             # Cerca su YouTube
             youtube_link = None
             if song_title:
-                with st.spinner("Cerco il video su YouTube..."):
+                with st.spinner(f"Cerco il video per '{song_title}'..."):
                     youtube_link = get_youtube_video(song_title)
 
             st.divider()
