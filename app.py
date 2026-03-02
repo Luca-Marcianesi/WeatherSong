@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import os
+import re
 from dotenv import load_dotenv
 import google.generativeai as genai
 
@@ -10,9 +11,35 @@ load_dotenv()
 # Chiavi API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 
 # Configura Gemini con la chiave API
 genai.configure(api_key=GEMINI_API_KEY)
+
+
+def get_youtube_video(query: str) -> str:
+    """
+    Cerca su YouTube il video corrispondente alla query
+    e restituisce il link completo.
+    """
+    search_url = "https://www.googleapis.com/youtube/v3/search"
+    params = {
+        "part": "snippet",
+        "q": query,
+        "key": YOUTUBE_API_KEY,
+        "maxResults": 1,
+        "type": "video"
+    }
+    
+    response = requests.get(search_url, params=params)
+    
+    if response.status_code == 200:
+        data = response.json()
+        if "items" in data and len(data["items"]) > 0:
+            video_id = data["items"][0]["id"]["videoId"]
+            return f"https://www.youtube.com/watch?v={video_id}"
+            
+    return None
 
 
 def get_weather(city: str) -> dict:
@@ -58,20 +85,17 @@ def get_weather(city: str) -> dict:
 
 def get_song_from_gemini(weather_description: str, city: str, temp: float) -> str:
     """
-    Chiede a Gemini di suggerire una canzone adatta al meteo
-    e di restituire il link Spotify corrispondente.
+    Chiede a Gemini di suggerire una canzone adatta al meteo.
+    Restituisce solo Titolo e Artista.
     """
     prompt = (
         f"Il meteo attuale a {city} è: {weather_description}, con una temperatura di {temp}°C. "
         "Suggerisci UNA sola canzone (titolo e artista) che si adatti perfettamente a questo meteo. "
-        "Poi fornisci il link diretto Spotify della canzone (formato: https://open.spotify.com/track/...). "
         "Rispondi SOLO in questo formato esatto:\n"
-        "Canzone: TITOLO - ARTISTA\n"
-        "Spotify: LINK"
+        "Canzone: TITOLO - ARTISTA"
     )
 
     # Usa il modello Gemini
-    # Questa è la versione più stabile e con quota garantita
     model = genai.GenerativeModel('gemini-flash-latest')
     response = model.generate_content(prompt)
     print("Gemini ha risposto:", response.text)  # Debug: stampa la risposta di Gemini
@@ -84,7 +108,7 @@ def get_song_from_gemini(weather_description: str, city: str, temp: float) -> st
 st.set_page_config(page_title="WeatherSong 🎵", page_icon="🌤️")
 
 st.title("🌤️ WeatherSong 🎵")
-st.markdown("Inserisci una città e ti suggerirò una canzone Spotify adatta al meteo!")
+st.markdown("Inserisci una città e ti suggerirò una canzone adatta al meteo con il video YouTube!")
 
 # Input utente
 city = st.text_input("📍 Inserisci la tua città", placeholder="es. Roma")
@@ -113,21 +137,27 @@ if st.button("🔍 Cerca canzone"):
 
             # Chiedi la canzone a Gemini
             with st.spinner("Cerco la canzone perfetta..."):
-                song_result = get_song_from_gemini(
+                gemini_response = get_song_from_gemini(
                     weather["description"], weather["city"], weather["temp"]
                 )
+            
+            # Parsing della risposta
+            song_title = gemini_response.replace("Canzone:", "").strip()
+            
+            # Cerca su YouTube
+            youtube_link = None
+            if song_title:
+                with st.spinner("Cerco il video su YouTube..."):
+                    youtube_link = get_youtube_video(song_title)
 
             st.divider()
             st.subheader("🎵 Canzone consigliata")
-            st.write(song_result)
+            
+            if song_title:
+                st.write(f"**{song_title}**")
+            else:
+                st.write(gemini_response)
 
-            # Prova ad estrarre il link Spotify dal testo
-            for line in song_result.split("\n"):
-                if "open.spotify.com" in line:
-                    # Estrai solo l'URL
-                    link = line.split("http")[-1]
-                    link = "http" + link.strip()
-                    # Rimuovi eventuali caratteri extra alla fine
-                    link = link.rstrip(")")
-                    st.link_button("🎧 Ascolta su Spotify", link)
-                    break
+            if youtube_link:
+                st.link_button("📺 Ascolta su YouTube", youtube_link)
+                st.video(youtube_link) # Mostra anche il player integrato se possibile
